@@ -139,7 +139,7 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
             const folderMap = new Map<string, ImportTreeItem>();
             const sectionItem = new ImportTreeItem(
                 sectionLabel,
-                vscode.TreeItemCollapsibleState.Expanded
+                vscode.TreeItemCollapsibleState.Collapsed
             );
             sectionItem.iconPath = new vscode.ThemeIcon('folder-library');
 
@@ -159,7 +159,7 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
                     if (!folderMap.has(currentPath)) {
                         const folderItem = new ImportTreeItem(
                             folderName,
-                            vscode.TreeItemCollapsibleState.Expanded
+                            vscode.TreeItemCollapsibleState.Collapsed
                         );
                         folderMap.set(currentPath, folderItem);
                         currentParent.children.push(folderItem);
@@ -551,6 +551,8 @@ interface SelectedItem {
     importType?: ImportType;
 }
 
+type SelectionResult = SelectedItem[] | null; // null indicates cancellation
+
 // Global reference to dispose tree view when done
 let currentTreeView: vscode.TreeView<ImportTreeItem> | undefined;
 let currentTreeProvider: ImportTreeDataProvider | undefined;
@@ -569,7 +571,7 @@ async function showFileSelectionTreeView(
     workspaceRoot: string,
     pathType: PathType,
     existingImports: ExistingImport[] = []
-): Promise<SelectedItem[]> {
+): Promise<SelectionResult> {
     currentPathType = pathType;
 
     return new Promise((resolve) => {
@@ -609,27 +611,36 @@ async function showFileSelectionTreeView(
 
         // Set up resolver for confirm/cancel buttons
         importSelectionResolver = (confirmed: boolean) => {
-            const selected = confirmed
-                ? currentTreeProvider?.getSelectedItems() || []
-                : [];
+            if (confirmed) {
+                const selected = currentTreeProvider?.getSelectedItems() || [];
 
-            // Convert to SelectedItem format
-            const result = selected.map(item => ({
-                isFile: true,
-                filePath: item.filePath,
-                relativePath: item.relativePath,
-                absolutePath: item.absolutePath,
-                importType: item.selectedImportType || undefined
-            }));
+                // Convert to SelectedItem format
+                const result = selected.map(item => ({
+                    isFile: true,
+                    filePath: item.filePath,
+                    relativePath: item.relativePath,
+                    absolutePath: item.absolutePath,
+                    importType: item.selectedImportType || undefined
+                }));
 
-            // Hide the tree view
-            vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
-            currentTreeView?.dispose();
-            currentTreeView = undefined;
-            currentTreeProvider = undefined;
-            importSelectionResolver = undefined;
+                // Hide the tree view
+                vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
+                currentTreeView?.dispose();
+                currentTreeView = undefined;
+                currentTreeProvider = undefined;
+                importSelectionResolver = undefined;
 
-            resolve(result);
+                resolve(result);
+            } else {
+                // User canceled - hide the tree view but don't update anything
+                vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
+                currentTreeView?.dispose();
+                currentTreeView = undefined;
+                currentTreeProvider = undefined;
+                importSelectionResolver = undefined;
+
+                resolve(null); // Indicate cancellation
+            }
         };
     });
 }
@@ -680,7 +691,7 @@ async function editRobotFileImports(uri: vscode.Uri): Promise<void> {
     }
 
     // Show file selection with pre-selected existing imports
-    const selectedImports = await showFileSelectionTreeView(
+    const selectionResult = await showFileSelectionTreeView(
         pyFiles,
         resourceFiles,
         targetDir,
@@ -689,8 +700,13 @@ async function editRobotFileImports(uri: vscode.Uri): Promise<void> {
         existingImports
     );
 
+    // If user canceled, do nothing and exit early
+    if (selectionResult === null) {
+        return; // User canceled, don't update the file
+    }
+
     // Generate new settings section
-    const newSettingsSection = generateSettingsSection(selectedImports, selectedPathType);
+    const newSettingsSection = generateSettingsSection(selectionResult, selectedPathType);
 
     // Update file content
     const updatedContent = updateSettingsSection(fileContent, newSettingsSection);
@@ -776,7 +792,14 @@ async function createRobotFileWithImports(
         selectedPathType = pathTypeResult;
 
         // Show file selection
-        selectedImports = await showFileSelectionTreeView(pyFiles, resourceFiles, targetDir, workspaceRoot, selectedPathType);
+        const selectionResult = await showFileSelectionTreeView(pyFiles, resourceFiles, targetDir, workspaceRoot, selectedPathType);
+
+        // If user canceled, exit early (no file will be created)
+        if (selectionResult === null) {
+            return; // User canceled
+        }
+
+        selectedImports = selectionResult;
     }
 
     // Generate file content
