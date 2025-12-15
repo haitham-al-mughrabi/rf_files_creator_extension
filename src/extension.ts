@@ -37,6 +37,7 @@ class ImportTreeItem extends vscode.TreeItem {
             fileExtension?: string;
             selectedImportType?: ImportType | null;
             availableImportTypes?: ImportType[];
+            isSuggested?: boolean;
         }
     ) {
         super(label, collapsibleState);
@@ -48,10 +49,13 @@ class ImportTreeItem extends vscode.TreeItem {
             this.fileExtension = options.fileExtension || '';
             this.selectedImportType = options.selectedImportType ?? null;
             this.availableImportTypes = options.availableImportTypes || [];
+            this.isSuggested = options.isSuggested ?? false;
         }
 
         this.updateAppearance();
     }
+
+    isSuggested: boolean = false;
 
     updateAppearance() {
         if (this.isFile) {
@@ -63,15 +67,24 @@ class ImportTreeItem extends vscode.TreeItem {
             // Set icon based on file type
             if (this.fileExtension === '.py') {
                 this.iconPath = new vscode.ThemeIcon('file-code');
+            } else if (this.fileExtension === '.robot') {
+                this.iconPath = new vscode.ThemeIcon('file-binary');
+            } else if (this.fileExtension === '.resource') {
+                this.iconPath = new vscode.ThemeIcon('file-submodule');
             } else {
                 this.iconPath = new vscode.ThemeIcon('file');
             }
 
             // Show selected import type or available options
             if (this.selectedImportType) {
-                this.description = `→ ${this.selectedImportType}`;
+                this.description = this.isSuggested
+                    ? `→ ${this.selectedImportType} $(star-full)`
+                    : `→ ${this.selectedImportType}`;
             } else {
-                this.description = `(${this.availableImportTypes.join(' | ')})`;
+                const baseDescription = `(${this.availableImportTypes.join(' | ')})`;
+                this.description = this.isSuggested
+                    ? `${baseDescription} $(star-full)`
+                    : baseDescription;
             }
 
             // Make clickable to change import type
@@ -93,13 +106,16 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
 
     private rootItems: ImportTreeItem[] = [];
     private allFileItems: ImportTreeItem[] = [];
+    private filteredRootItems: ImportTreeItem[] = []; // Store filtered results
+    private searchFilter: string = ''; // Store current search term
 
     constructor(
         private pyFiles: vscode.Uri[],
         private resourceFiles: vscode.Uri[],
         private targetDir: string,
         private workspaceRoot: string,
-        private existingImports: ExistingImport[] = []
+        private existingImports: ExistingImport[] = [],
+        private suggestedFiles: vscode.Uri[] = []
     ) {
         this.buildTree();
     }
@@ -124,6 +140,13 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
                 }
             }
             return null;
+        };
+
+        // Check if a file is suggested
+        const isFileSuggested = (fileUri: vscode.Uri): boolean => {
+            return this.suggestedFiles.some(suggestedFile =>
+                suggestedFile.fsPath === fileUri.fsPath
+            );
         };
 
         // Build tree for a set of files
@@ -170,6 +193,9 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
                 // Find if this file has an existing import
                 const existingType = findExistingImportType(relativePath) || findExistingImportType(absPath);
 
+                // Check if this file is suggested
+                const suggested = isFileSuggested(file);
+
                 // Add single file item with selectable import type
                 const fileItem = new ImportTreeItem(
                     fileName,
@@ -181,7 +207,8 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
                         absolutePath: absPath,
                         fileExtension,
                         selectedImportType: existingType,
-                        availableImportTypes
+                        availableImportTypes,
+                        isSuggested: suggested
                     }
                 );
                 currentParent.children.push(fileItem);
@@ -205,9 +232,76 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
 
     getChildren(element?: ImportTreeItem): ImportTreeItem[] {
         if (!element) {
-            return this.rootItems;
+            // Return filtered results if search is active, otherwise return all
+            return this.searchFilter ? this.filteredRootItems : this.rootItems;
+        }
+        // If search is active, return all children since they should be visible if parent matches
+        if (this.searchFilter) {
+            // When searching, we need to show all children of matching parent
+            return element.children;
         }
         return element.children;
+    }
+
+    /**
+     * Set search filter and refresh the tree view
+     */
+    setSearchFilter(filter: string) {
+        this.searchFilter = filter.toLowerCase();
+        if (this.searchFilter) {
+            this.applyFilter();
+        } else {
+            // Reset to original tree when search is cleared
+            this.filteredRootItems = [];
+        }
+        this.refresh();
+    }
+
+    /**
+     * Apply filter to the tree
+     */
+    private applyFilter() {
+        this.filteredRootItems = [];
+
+        // Process each root section
+        for (const rootItem of this.rootItems) {
+            const filteredItem = this.filterTreeItem(rootItem);
+            if (filteredItem) {
+                this.filteredRootItems.push(filteredItem);
+            }
+        }
+    }
+
+    /**
+     * Recursively filter a tree item and its children
+     */
+    private filterTreeItem(item: ImportTreeItem): ImportTreeItem | null {
+        // If it's a file item, check if it matches the search
+        if (item.isFile) {
+            const matches = item.label.toLowerCase().includes(this.searchFilter) ||
+                           (item.description && typeof item.description === 'string' &&
+                            item.description.toLowerCase().includes(this.searchFilter));
+            return matches ? item : null;
+        } else {
+            // For folder items, check if any children match
+            const filteredChildren: ImportTreeItem[] = [];
+            for (const child of item.children) {
+                const filteredChild = this.filterTreeItem(child);
+                if (filteredChild) {
+                    filteredChildren.push(filteredChild);
+                }
+            }
+
+            // If folder has matching children, return a copy with filtered children
+            if (filteredChildren.length > 0) {
+                const newItem = new ImportTreeItem(item.label, vscode.TreeItemCollapsibleState.Expanded);
+                newItem.children = filteredChildren;
+                newItem.isFile = false;
+                newItem.iconPath = item.iconPath;
+                return newItem;
+            }
+            return null;
+        }
     }
 
     getParent(_element: ImportTreeItem): vscode.ProviderResult<ImportTreeItem> {
@@ -337,6 +431,47 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
+    // Register command: Preview Imports
+    const previewImports = vscode.commands.registerCommand(
+        'rfFilesCreator.previewImports',
+        () => {
+            if (currentTreeProvider) {
+                const selectedItems = currentTreeProvider.getSelectedItems();
+                if (selectedItems.length === 0) {
+                    vscode.window.showInformationMessage('No imports selected to preview.');
+                    return;
+                }
+
+                // Generate preview content for selected imports
+                const previewContent = generatePreviewContent(selectedItems);
+
+                // Show the preview in an information message
+                vscode.window.showInformationMessage(`Preview:\n${previewContent}`, 'OK');
+            }
+        }
+    );
+
+    // Register command: Search Imports
+    const searchImports = vscode.commands.registerCommand(
+        'rfFilesCreator.searchImports',
+        async () => {
+            if (currentTreeProvider) {
+                const searchTerm = await vscode.window.showInputBox({
+                    prompt: 'Enter search term to filter imports',
+                    placeHolder: 'Search files, folders, or import types...',
+                    validateInput: (value) => {
+                        // No validation needed
+                        return null;
+                    }
+                });
+
+                if (searchTerm !== undefined) { // Allow empty string to clear search
+                    currentTreeProvider.setSearchFilter(searchTerm);
+                }
+            }
+        }
+    );
+
     context.subscriptions.push(
         createTestFile,
         createResourceFile,
@@ -345,7 +480,9 @@ export function activate(context: vscode.ExtensionContext) {
         editImports,
         confirmImports,
         cancelImports,
-        selectImportType
+        selectImportType,
+        previewImports,
+        searchImports
     );
 }
 
@@ -415,6 +552,68 @@ function parseExistingImports(fileContent: string): ExistingImport[] {
     }
 
     return imports;
+}
+
+/**
+ * Analyze file content to suggest relevant imports
+ */
+function analyzeFileContentForSuggestions(fileContent: string, allPyFiles: vscode.Uri[], allResourceFiles: vscode.Uri[]): vscode.Uri[] {
+    const suggestions: vscode.Uri[] = [];
+    const lines = fileContent.split('\n');
+
+    // Common Robot Framework keywords that might indicate needed imports
+    const commonLibraries = [
+        { pattern: /selenium|webdriver|browser/i, name: 'SeleniumLibrary' },
+        { pattern: /request|http|api/i, name: 'RequestsLibrary' },
+        { pattern: /operating system|file|directory|path/i, name: 'OperatingSystem' },
+        { pattern: /string|replace|split|join/i, name: 'String' },
+        { pattern: /collection|list|dict|set/i, name: 'Collections' },
+        { pattern: /xml/i, name: 'XMLLibrary' },
+        { pattern: /screenshot|wait|element|click|input/i, name: 'SeleniumLibrary' }
+    ];
+
+    // Look for patterns in the content that suggest needed libraries
+    for (const line of lines) {
+        const lowerLine = line.toLowerCase();
+
+        for (const lib of commonLibraries) {
+            if (lib.pattern.test(lowerLine)) {
+                // Find matching Python library files
+                const matchingFiles = allPyFiles.filter(file => {
+                    const fileName = path.basename(file.fsPath).toLowerCase();
+                    return fileName.includes(lib.name.toLowerCase()) ||
+                           fileName.includes(lib.name.toLowerCase().replace(/library/i, '').replace(/lib/i, ''));
+                });
+
+                suggestions.push(...matchingFiles);
+            }
+        }
+    }
+
+    // Also check for keywords that might be in resource files
+    const resourceKeywords = [
+        { pattern: /keyword|function|task|step/i, name: '.resource' }
+    ];
+
+    for (const line of lines) {
+        for (const resPattern of resourceKeywords) {
+            if (resPattern.pattern.test(line)) {
+                // Add any resource files that match common naming patterns
+                const matchingResources = allResourceFiles.filter(file => {
+                    const fileName = path.basename(file.fsPath).toLowerCase();
+                    return fileName.includes(resPattern.name.toLowerCase()) ||
+                           fileName.includes('common') ||
+                           fileName.includes('keywords') ||
+                           fileName.includes('utils');
+                });
+
+                suggestions.push(...matchingResources);
+            }
+        }
+    }
+
+    // Remove duplicates
+    return [...new Set(suggestions)];
 }
 
 /**
@@ -570,7 +769,8 @@ async function showFileSelectionTreeView(
     targetDir: string,
     workspaceRoot: string,
     pathType: PathType,
-    existingImports: ExistingImport[] = []
+    existingImports: ExistingImport[] = [],
+    suggestedFiles: vscode.Uri[] = []
 ): Promise<SelectionResult> {
     currentPathType = pathType;
 
@@ -581,7 +781,8 @@ async function showFileSelectionTreeView(
             resourceFiles,
             targetDir,
             workspaceRoot,
-            existingImports
+            existingImports,
+            suggestedFiles
         );
 
         // Show the tree view by setting context
@@ -609,6 +810,15 @@ async function showFileSelectionTreeView(
         // Show the tree view
         vscode.commands.executeCommand('rfImportSelector.focus');
 
+        // Helper function to cleanup tree view
+        const cleanupTreeView = () => {
+            vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
+            currentTreeView?.dispose();
+            currentTreeView = undefined;
+            currentTreeProvider = undefined;
+            importSelectionResolver = undefined;
+        };
+
         // Set up resolver for confirm/cancel buttons
         importSelectionResolver = (confirmed: boolean) => {
             if (confirmed) {
@@ -624,20 +834,12 @@ async function showFileSelectionTreeView(
                 }));
 
                 // Hide the tree view
-                vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
-                currentTreeView?.dispose();
-                currentTreeView = undefined;
-                currentTreeProvider = undefined;
-                importSelectionResolver = undefined;
+                cleanupTreeView();
 
                 resolve(result);
             } else {
                 // User canceled - hide the tree view but don't update anything
-                vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
-                currentTreeView?.dispose();
-                currentTreeView = undefined;
-                currentTreeProvider = undefined;
-                importSelectionResolver = undefined;
+                cleanupTreeView();
 
                 resolve(null); // Indicate cancellation
             }
@@ -659,71 +861,91 @@ async function editRobotFileImports(uri: vscode.Uri): Promise<void> {
     const filePath = uri.fsPath;
     const targetDir = path.dirname(filePath);
 
-    // Read the file content
-    let fileContent: string;
-    try {
-        fileContent = fs.readFileSync(filePath, 'utf8');
-    } catch (error) {
-        vscode.window.showErrorMessage(`Failed to read file: ${filePath}`);
-        return;
-    }
+    // Show progress while scanning files
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Scanning importable files...",
+        cancellable: false
+    }, async (progress) => {
+        // Read the file content
+        let fileContent: string;
+        try {
+            fileContent = fs.readFileSync(filePath, 'utf8');
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to read file: ${filePath}`);
+            return;
+        }
 
-    // Parse existing imports
-    const existingImports = parseExistingImports(fileContent);
+        // Parse existing imports
+        const existingImports = parseExistingImports(fileContent);
 
-    // Find importable files (filtered to project folders)
-    const allPyFiles = await vscode.workspace.findFiles('**/*.py', '{**/node_modules/**,**/venv/**,**/.venv/**,**/__pycache__/**}');
-    const allResourceFiles = await vscode.workspace.findFiles('**/*.resource', '{**/node_modules/**,**/venv/**,**/.venv/**}');
+        progress.report({ increment: 20, message: "Finding Python files..." });
 
-    // Filter to allowed project folders
-    const pyFiles = filterProjectFiles(allPyFiles, workspaceRoot);
-    const resourceFiles = filterProjectFiles(allResourceFiles, workspaceRoot);
+        // Find importable files (filtered to project folders)
+        const allPyFiles = await vscode.workspace.findFiles('**/*.py', '{**/node_modules/**,**/venv/**,**/.venv/**,**/__pycache__/**}');
 
-    if (pyFiles.length === 0 && resourceFiles.length === 0) {
-        vscode.window.showWarningMessage('No importable files found in project folders (Libraries, Tests, Utilities, Resources, POM).');
-        return;
-    }
+        progress.report({ increment: 20, message: "Finding Resource files..." });
 
-    // Ask for path type
-    const selectedPathType = await selectPathType();
-    if (selectedPathType === undefined) {
-        return; // User cancelled
-    }
+        const allResourceFiles = await vscode.workspace.findFiles('**/*.resource', '{**/node_modules/**,**/venv/**,**/.venv/**}');
 
-    // Show file selection with pre-selected existing imports
-    const selectionResult = await showFileSelectionTreeView(
-        pyFiles,
-        resourceFiles,
-        targetDir,
-        workspaceRoot,
-        selectedPathType,
-        existingImports
-    );
+        // Filter to allowed project folders
+        const pyFiles = filterProjectFiles(allPyFiles, workspaceRoot);
+        const resourceFiles = filterProjectFiles(allResourceFiles, workspaceRoot);
 
-    // If user canceled, do nothing and exit early
-    if (selectionResult === null) {
-        return; // User canceled, don't update the file
-    }
+        if (pyFiles.length === 0 && resourceFiles.length === 0) {
+            vscode.window.showWarningMessage('No importable files found in project folders (Libraries, Tests, Utilities, Resources, POM).');
+            return;
+        }
 
-    // Generate new settings section
-    const newSettingsSection = generateSettingsSection(selectionResult, selectedPathType);
+        progress.report({ increment: 20, message: "Analyzing content for import suggestions..." });
 
-    // Update file content
-    const updatedContent = updateSettingsSection(fileContent, newSettingsSection);
+        // Analyze file content for import suggestions
+        const suggestedFiles = analyzeFileContentForSuggestions(fileContent, allPyFiles, allResourceFiles);
 
-    // Write back to file
-    try {
-        fs.writeFileSync(filePath, updatedContent, 'utf8');
+        progress.report({ increment: 20, message: "Preparing import selection..." });
 
-        // Refresh the document if it's open
-        const document = await vscode.workspace.openTextDocument(filePath);
-        await vscode.window.showTextDocument(document);
+        // Ask for path type
+        const selectedPathType = await selectPathType();
+        if (selectedPathType === undefined) {
+            return; // User cancelled
+        }
 
-        vscode.window.showInformationMessage(`Updated imports in ${path.basename(filePath)}`);
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        vscode.window.showErrorMessage(`Failed to update file: ${errorMessage}`);
-    }
+        // Show file selection with pre-selected existing imports and suggested files highlighted
+        const selectionResult = await showFileSelectionTreeView(
+            pyFiles,
+            resourceFiles,
+            targetDir,
+            workspaceRoot,
+            selectedPathType,
+            existingImports,
+            suggestedFiles // Pass suggested files to highlight them
+        );
+
+        // If user canceled, do nothing and exit early
+        if (selectionResult === null) {
+            return; // User canceled, don't update the file
+        }
+
+        // Generate new settings section
+        const newSettingsSection = generateSettingsSection(selectionResult, selectedPathType);
+
+        // Update file content
+        const updatedContent = updateSettingsSection(fileContent, newSettingsSection);
+
+        // Write back to file
+        try {
+            fs.writeFileSync(filePath, updatedContent, 'utf8');
+
+            // Refresh the document if it's open
+            const document = await vscode.workspace.openTextDocument(filePath);
+            await vscode.window.showTextDocument(document);
+
+            vscode.window.showInformationMessage(`Updated imports in ${path.basename(filePath)}`);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Failed to update file: ${errorMessage}`);
+        }
+    });
 }
 
 /**
@@ -769,43 +991,107 @@ async function createRobotFileWithImports(
         if (overwrite !== 'Yes') return;
     }
 
-    // Find importable files (filtered to project folders)
-    const allPyFiles = await vscode.workspace.findFiles('**/*.py', '{**/node_modules/**,**/venv/**,**/.venv/**,**/__pycache__/**}');
-    const allResourceFiles = await vscode.workspace.findFiles('**/*.resource', '{**/node_modules/**,**/venv/**,**/.venv/**}');
+    // Show progress while scanning files
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Scanning importable files...",
+        cancellable: false
+    }, async (progress) => {
+        // Find importable files (filtered to project folders)
+        const allPyFiles = await vscode.workspace.findFiles('**/*.py', '{**/node_modules/**,**/venv/**,**/.venv/**,**/__pycache__/**}');
 
-    // Filter to allowed project folders
-    const pyFiles = filterProjectFiles(allPyFiles, workspaceRoot);
-    const resourceFiles = filterProjectFiles(allResourceFiles, workspaceRoot);
+        progress.report({ increment: 40, message: "Finding Resource files..." });
 
-    let selectedImports: SelectedItem[] = [];
-    let selectedPathType: PathType = 'relative';
+        const allResourceFiles = await vscode.workspace.findFiles('**/*.resource', '{**/node_modules/**,**/venv/**,**/.venv/**}');
 
-    if (pyFiles.length > 0 || resourceFiles.length > 0) {
-        // Ask for path type
-        const pathTypeResult = await selectPathType();
-        if (pathTypeResult === undefined) {
-            // User cancelled, create file without imports
-            const template = `*** Settings ***\n\n\n${mainSection}\n`;
-            await writeFile(filePath, template, fileType, fullFileName);
-            return;
+        // Filter to allowed project folders
+        const pyFiles = filterProjectFiles(allPyFiles, workspaceRoot);
+        const resourceFiles = filterProjectFiles(allResourceFiles, workspaceRoot);
+
+        let selectedImports: SelectedItem[] = [];
+        let selectedPathType: PathType = 'relative';
+
+        if (pyFiles.length > 0 || resourceFiles.length > 0) {
+            // Ask for path type
+            const pathTypeResult = await selectPathType();
+            if (pathTypeResult === undefined) {
+                // User cancelled, create file without imports
+                const template = `*** Settings ***\n\n\n${mainSection}\n`;
+                await writeFile(filePath, template, fileType, fullFileName);
+                return;
+            }
+            selectedPathType = pathTypeResult;
+
+            progress.report({ increment: 20, message: "Preparing import selection..." });
+
+            // Show file selection (passing empty array for suggested files since we don't have content to analyze yet)
+            const selectionResult = await showFileSelectionTreeView(pyFiles, resourceFiles, targetDir, workspaceRoot, selectedPathType, [], []);
+
+            // If user canceled, exit early (no file will be created)
+            if (selectionResult === null) {
+                return; // User canceled
+            }
+
+            selectedImports = selectionResult;
         }
-        selectedPathType = pathTypeResult;
 
-        // Show file selection
-        const selectionResult = await showFileSelectionTreeView(pyFiles, resourceFiles, targetDir, workspaceRoot, selectedPathType);
+        // Generate file content
+        const settingsSection = generateSettingsSection(selectedImports, selectedPathType);
+        const template = `${settingsSection}\n\n${mainSection}\n`;
+        await writeFile(filePath, template, fileType, fullFileName);
+    });
+}
 
-        // If user canceled, exit early (no file will be created)
-        if (selectionResult === null) {
-            return; // User canceled
+/**
+ * Generate preview content for selected imports
+ */
+function generatePreviewContent(selectedItems: ImportTreeItem[]): string {
+    const libraries: string[] = [];
+    const resources: string[] = [];
+    const variables: string[] = [];
+
+    for (const item of selectedItems) {
+        if (!item.isFile) continue;
+
+        const filePath = item.relativePath || item.absolutePath || item.filePath;
+
+        switch (item.selectedImportType) {
+            case 'Library':
+                libraries.push(filePath);
+                break;
+            case 'Resource':
+                resources.push(filePath);
+                break;
+            case 'Variables':
+                variables.push(filePath);
+                break;
         }
-
-        selectedImports = selectionResult;
     }
 
-    // Generate file content
-    const settingsSection = generateSettingsSection(selectedImports, selectedPathType);
-    const template = `${settingsSection}\n\n${mainSection}\n`;
-    await writeFile(filePath, template, fileType, fullFileName);
+    let preview = '*** Settings ***\n';
+
+    if (libraries.length > 0) {
+        preview += '\n# Libraries:\n';
+        for (const lib of libraries) {
+            preview += `Library    ${lib}\n`;
+        }
+    }
+
+    if (resources.length > 0) {
+        preview += '\n# Resources:\n';
+        for (const res of resources) {
+            preview += `Resource    ${res}\n`;
+        }
+    }
+
+    if (variables.length > 0) {
+        preview += '\n# Variables:\n';
+        for (const vars of variables) {
+            preview += `Variables    ${vars}\n`;
+        }
+    }
+
+    return preview;
 }
 
 /**

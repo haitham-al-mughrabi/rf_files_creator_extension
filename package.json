@@ -62,6 +62,16 @@
         "command": "rfFilesCreator.cancelImports",
         "title": "Cancel",
         "icon": "$(close)"
+      },
+      {
+        "command": "rfFilesCreator.previewImports",
+        "title": "Preview Imports",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "rfFilesCreator.searchImports",
+        "title": "Search Imports",
+        "icon": "$(search)"
       }
     ],
     "views": {
@@ -77,14 +87,24 @@
     "menus": {
       "view/title": [
         {
-          "command": "rfFilesCreator.confirmImports",
+          "command": "rfFilesCreator.searchImports",
+          "when": "view == rfImportSelector",
+          "group": "navigation@0"
+        },
+        {
+          "command": "rfFilesCreator.previewImports",
           "when": "view == rfImportSelector",
           "group": "navigation@1"
         },
         {
-          "command": "rfFilesCreator.cancelImports",
+          "command": "rfFilesCreator.confirmImports",
           "when": "view == rfImportSelector",
           "group": "navigation@2"
+        },
+        {
+          "command": "rfFilesCreator.cancelImports",
+          "when": "view == rfImportSelector",
+          "group": "navigation@3"
         }
       ],
       "explorer/context": [

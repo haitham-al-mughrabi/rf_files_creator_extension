@@ -23,6 +23,10 @@ Right-click on any folder in the Explorer to see the following options:
    - Preserve and pre-select existing imports
    - Choose between relative paths or workspace paths
    - Collapsible folder structure for easy navigation
+   - Search functionality to quickly find desired files
+   - Preview imports before confirming changes
+   - Context-aware suggestions based on file content
+   - Visual progress indicators during scanning
 
 ## Installation
 
@@ -91,6 +95,11 @@ Empty file ready for your Python locator definitions.
 - **Path Options**: Select between relative paths or workspace paths
 - **Preserve Existing**: Existing imports are pre-selected when editing
 - **Collapsible Folders**: Folder structure is collapsed by default for easier navigation
+- **Search Functionality**: Quickly find desired files using the search feature
+- **Import Preview**: Preview the imports that will be added before confirming
+- **Context-Based Suggestions**: Automatic suggestions based on content in the file
+- **Progress Indicators**: Visual feedback during file scanning and processing
+- **Enhanced File Icons**: Better visual distinction between file types (.py, .robot, .resource)
 
 ## Requirements
 
