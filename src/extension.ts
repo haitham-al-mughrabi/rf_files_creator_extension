@@ -445,6 +445,7 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         item.updateAppearance();
         this.refresh(item);
     }
+
 }
 
 /**
@@ -460,18 +461,41 @@ async function expandAllItems(treeView: vscode.TreeView<ImportTreeItem>, items: 
 }
 
 /**
- * Recursively collapse all tree items
+ * Welcome tree data provider shown when no import selection is active
  */
-async function collapseAllItems(treeView: vscode.TreeView<ImportTreeItem>, items: ImportTreeItem[]): Promise<void> {
-    for (const item of items) {
-        if (item.children && item.children.length > 0) {
-            await collapseAllItems(treeView, item.children);
-            await treeView.reveal(item, { expand: false, select: false, focus: false });
-        }
+class WelcomeTreeDataProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+    getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+        return element;
+    }
+
+    getChildren(): vscode.TreeItem[] {
+        const welcomeItem = new vscode.TreeItem('Right-click a folder to create RF files');
+        welcomeItem.iconPath = new vscode.ThemeIcon('info');
+
+        const createItem = new vscode.TreeItem('Or right-click .robot/.resource to edit imports');
+        createItem.iconPath = new vscode.ThemeIcon('edit');
+
+        return [welcomeItem, createItem];
     }
 }
 
+// Welcome tree view provider
+let welcomeTreeView: vscode.TreeView<vscode.TreeItem> | undefined;
+
+/**
+ * Initialize the tree view with welcome content
+ */
+function initializeTreeView(): void {
+    const welcomeProvider = new WelcomeTreeDataProvider();
+    welcomeTreeView = vscode.window.createTreeView('rfImportSelector', {
+        treeDataProvider: welcomeProvider
+    });
+}
+
 export function activate(context: vscode.ExtensionContext) {
+    // Initialize the tree view with a welcome provider
+    initializeTreeView();
+
     // Register command: Create Robot Framework Test File
     const createTestFile = vscode.commands.registerCommand(
         'rfFilesCreator.createTestFile',
@@ -633,10 +657,8 @@ export function activate(context: vscode.ExtensionContext) {
     const collapseAll = vscode.commands.registerCommand(
         'rfFilesCreator.collapseAll',
         async () => {
-            if (currentTreeView && currentTreeProvider) {
-                const rootItems = currentTreeProvider.getRootItems();
-                await collapseAllItems(currentTreeView, rootItems);
-            }
+            // Use VSCode's built-in collapse all command for the tree view
+            await vscode.commands.executeCommand('workbench.actions.treeView.rfImportSelector.collapseAll');
         }
     );
 
@@ -963,6 +985,12 @@ async function showFileSelectionTreeView(
     currentPathType = pathType;
 
     return new Promise((resolve) => {
+        // Dispose the welcome tree view if it exists
+        if (welcomeTreeView) {
+            welcomeTreeView.dispose();
+            welcomeTreeView = undefined;
+        }
+
         // Create tree data provider with all files combined
         currentTreeProvider = new ImportTreeDataProvider(
             allFiles, // Use the combined files directly
@@ -997,13 +1025,15 @@ async function showFileSelectionTreeView(
         // Show the tree view
         vscode.commands.executeCommand('rfImportSelector.focus');
 
-        // Helper function to cleanup tree view
+        // Helper function to cleanup tree view and restore welcome view
         const cleanupTreeView = () => {
             vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
             currentTreeView?.dispose();
             currentTreeView = undefined;
             currentTreeProvider = undefined;
             importSelectionResolver = undefined;
+            // Restore the welcome tree view
+            initializeTreeView();
         };
 
         // Set up resolver for confirm/cancel buttons

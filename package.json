@@ -24,6 +24,7 @@
     "locators"
   ],
   "activationEvents": [
+    "onView:rfImportSelector",
     "onCommand:rfFilesCreator.createTestFile",
     "onCommand:rfFilesCreator.createResourceFile",
     "onCommand:rfFilesCreator.createVariablesFile",
@@ -94,12 +95,20 @@
         "icon": "$(go-to-file)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rf-toolkit",
+          "title": "Robot Framework Toolkit",
+          "icon": "$(beaker)"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "rf-toolkit": [
         {
           "id": "rfImportSelector",
-          "name": "RF Import Selector",
-          "when": "rfImportSelectorVisible",
+          "name": "Import Selector",
           "icon": "$(checklist)"
         }
       ]
