@@ -127,7 +127,7 @@
         },
         {
           "command": "rfFilesCreator.clearSearch",
-          "when": "view == rfImportSelector",
+          "when": "view == rfImportSelector && rfHasActiveSearch",
           "group": "navigation@2"
         },
         {
@@ -142,12 +142,12 @@
         },
         {
           "command": "rfFilesCreator.confirmImports",
-          "when": "view == rfImportSelector",
+          "when": "view == rfImportSelector && rfHasPendingChanges",
           "group": "navigation@5"
         },
         {
           "command": "rfFilesCreator.cancelImports",
-          "when": "view == rfImportSelector",
+          "when": "view == rfImportSelector && rfHasPendingChanges",
           "group": "navigation@6"
         }
       ],

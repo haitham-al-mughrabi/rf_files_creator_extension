@@ -117,10 +117,15 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         private allFiles: vscode.Uri[],
         private targetDir: string,
         private workspaceRoot: string,
+        private targetFile: string,  // Added target file path
         private existingImports: ExistingImport[] = [],
         private suggestedFiles: vscode.Uri[] = []
     ) {
         this.buildTree();
+
+        // Initialize context for search and pending changes
+        vscode.commands.executeCommand('setContext', 'rfHasActiveSearch', false);
+        vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', false);
     }
 
     private buildTree() {
@@ -152,74 +157,6 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
             );
         };
 
-        // Build tree for a set of files
-        const buildSection = (
-            files: vscode.Uri[],
-            availableImportTypes: ImportType[],
-            sectionLabel: string,
-            fileExtension: string
-        ): ImportTreeItem | null => {
-            if (files.length === 0) return null;
-
-            // Create folder structure
-            const folderMap = new Map<string, ImportTreeItem>();
-            const sectionItem = new ImportTreeItem(
-                sectionLabel,
-                vscode.TreeItemCollapsibleState.Collapsed
-            );
-            sectionItem.iconPath = new vscode.ThemeIcon('folder-library');
-
-            for (const file of files) {
-                const absPath = getAbsolutePath(file.fsPath);
-                const relativePath = getRelativePath(file.fsPath);
-                const parts = absPath.split('/');
-                const fileName = parts.pop()!;
-
-                // Build folder hierarchy
-                let currentParent = sectionItem;
-                let currentPath = '';
-
-                for (const folderName of parts) {
-                    currentPath = currentPath ? `${currentPath}/${folderName}` : folderName;
-
-                    if (!folderMap.has(currentPath)) {
-                        const folderItem = new ImportTreeItem(
-                            folderName,
-                            vscode.TreeItemCollapsibleState.Collapsed
-                        );
-                        folderMap.set(currentPath, folderItem);
-                        currentParent.children.push(folderItem);
-                    }
-                    currentParent = folderMap.get(currentPath)!;
-                }
-
-                // Find if this file has an existing import
-                const existingType = findExistingImportType(relativePath) || findExistingImportType(absPath);
-
-                // Check if this file is suggested
-                const suggested = isFileSuggested(file);
-
-                // Add single file item with selectable import type
-                const fileItem = new ImportTreeItem(
-                    fileName,
-                    vscode.TreeItemCollapsibleState.None,
-                    {
-                        isFile: true,
-                        filePath: file.fsPath,
-                        relativePath,
-                        absolutePath: absPath,
-                        fileExtension,
-                        selectedImportType: existingType,
-                        availableImportTypes,
-                        isSuggested: suggested
-                    }
-                );
-                currentParent.children.push(fileItem);
-                this.allFileItems.push(fileItem);
-            }
-
-            return sectionItem;
-        };
 
         // Use all files for the unified tree (main section first)
         const allFilesSection = this.createUnifiedFileTree(this.allFiles);
@@ -322,6 +259,11 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         sectionItem.iconPath = new vscode.ThemeIcon('folder-library');
 
         for (const file of files) {
+            // Skip the target file itself to prevent importing the file into itself
+            if (file.fsPath === this.targetFile) {
+                continue;
+            }
+
             const absPath = getAbsolutePath(file.fsPath);
             const relativePath = getRelativePath(file.fsPath);
             const parts = absPath.split('/');
@@ -400,9 +342,13 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         this.searchFilter = filter.toLowerCase();
         if (this.searchFilter) {
             this.applyFilter();
+            // Set search active context
+            vscode.commands.executeCommand('setContext', 'rfHasActiveSearch', true);
         } else {
             // Reset to original tree when search is cleared
             this.filteredRootItems = [];
+            // Clear search active context
+            vscode.commands.executeCommand('setContext', 'rfHasActiveSearch', false);
         }
         this.refresh();
     }
@@ -474,6 +420,10 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         item.selectedImportType = importType;
         item.updateAppearance();
         this.refresh(item);
+
+        // Set the pending changes flag
+        hasPendingChanges = true;
+        vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', true);
     }
 
     toggleSelection(item: ImportTreeItem, checked: boolean): void {
@@ -486,6 +436,10 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
         }
         item.updateAppearance();
         this.refresh(item);
+
+        // Set the pending changes flag
+        hasPendingChanges = true;
+        vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', true);
     }
 
 }
@@ -646,6 +600,7 @@ async function loadImportsForFile(filePath: string): Promise<void> {
         allImportableFiles,
         targetDir,
         workspaceRoot,
+        filePath,  // Pass the target file path
         existingImports,
         suggestedFiles
     );
@@ -708,10 +663,31 @@ async function loadImportsForFile(filePath: string): Promise<void> {
                 await vscode.window.showTextDocument(document);
 
                 vscode.window.showInformationMessage(`Updated imports in ${path.basename(filePath)}`);
+
+                // Reload the tree with updated imports
+                // But preserve the current locking state
+                const wasLocked = isTargetLocked;
+                const lockedFile = lockedTargetFile;
+
+                // Reload the imports to reflect the changes
+                await loadImportsForFile(filePath);
+
+                // If it was locked, lock it again
+                if (wasLocked && lockedFile) {
+                    lockTargetFile(lockedFile);
+                }
+
+                // Reset pending changes flag after successful update
+                hasPendingChanges = false;
+                vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', false);
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
                 vscode.window.showErrorMessage(`Failed to update file: ${errorMessage}`);
             }
+        } else {
+            // User canceled - reset pending changes flag
+            hasPendingChanges = false;
+            vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', false);
         }
         // Don't cleanup - keep the tree view open for further editing
     };
@@ -732,21 +708,12 @@ export function activate(context: vscode.ExtensionContext) {
             if (editor && isRobotFrameworkFile(editor.document.uri.fsPath)) {
                 const newFilePath = editor.document.uri.fsPath;
 
-                // If locked and user returns to the target file, auto-unlock
+                // If locked and user returns to the target file, auto-unlock but preserve selections
                 if (isTargetLocked && lockedTargetFile && newFilePath === lockedTargetFile) {
                     unlockTargetFile();
 
-                    // Now load imports for this file normally
-                    if (currentTreeView) {
-                        currentTreeView.dispose();
-                        currentTreeView = undefined;
-                        currentTreeProvider = undefined;
-                    }
-                    if (welcomeTreeView) {
-                        welcomeTreeView.dispose();
-                        welcomeTreeView = undefined;
-                    }
-                    loadImportsForFile(newFilePath);
+                    // Just update the editor focus to the target file without reloading the tree
+                    // This maintains the pending selections in the tree view
                     return;
                 }
 
@@ -1279,6 +1246,7 @@ type SelectionResult = SelectedItem[] | null; // null indicates cancellation
 let currentTreeView: vscode.TreeView<ImportTreeItem> | undefined;
 let currentTreeProvider: ImportTreeDataProvider | undefined;
 let importSelectionResolver: ((confirmed: boolean) => void) | undefined;
+let hasPendingChanges: boolean = false;  // Track if there are pending changes
 
 // Store pathType globally for generating settings
 let currentPathType: PathType = 'relative';
@@ -1292,6 +1260,7 @@ async function showFileSelectionTreeView(
     targetDir: string,
     workspaceRoot: string,
     pathType: PathType,
+    targetFile: string,  // Added target file path
     existingImports: ExistingImport[] = [],
     suggestedFiles: vscode.Uri[] = []
 ): Promise<SelectionResult> {
@@ -1309,6 +1278,7 @@ async function showFileSelectionTreeView(
             allFiles, // Use the combined files directly
             targetDir,
             workspaceRoot,
+            targetFile,  // Pass the target file path
             existingImports,
             suggestedFiles
         );
@@ -1341,6 +1311,8 @@ async function showFileSelectionTreeView(
         // Helper function to cleanup tree view and restore welcome view
         const cleanupTreeView = () => {
             vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', false);
+            vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', false);
+            vscode.commands.executeCommand('setContext', 'rfHasActiveSearch', false);
             currentTreeView?.dispose();
             currentTreeView = undefined;
             currentTreeProvider = undefined;
@@ -1456,6 +1428,7 @@ async function editRobotFileImports(uri: vscode.Uri): Promise<void> {
             targetDir,
             workspaceRoot,
             selectedPathType,
+            filePath,  // Pass the target file path
             existingImports,
             suggestedFiles // Pass suggested files to highlight them
         );
@@ -1573,7 +1546,7 @@ async function createRobotFileWithImports(
 
             // Show file selection (passing empty array for suggested files since we don't have content to analyze yet)
             // Use the pre-combined files that include all types
-            const selectionResult = await showFileSelectionTreeView(combinedFiles, [], targetDir, workspaceRoot, selectedPathType, [], []);
+            const selectionResult = await showFileSelectionTreeView(combinedFiles, [], targetDir, workspaceRoot, selectedPathType, filePath, [], []);
 
             // If user canceled, exit early (no file will be created)
             if (selectionResult === null) {

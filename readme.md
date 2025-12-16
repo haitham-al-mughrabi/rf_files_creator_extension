@@ -56,6 +56,9 @@ Right-click on any folder in the Explorer to see the following options:
 - **Checkboxes**: Visual indication of selected imports with checkboxes to toggle selection
 
 ### Navigation and Search
+- **Smart Button Visibility**: Buttons appear contextually based on current state
+  - *Confirm/Clear* buttons only show when you have pending import selections
+  - *Clear Search* button only shows when an active search is in progress
 - **Search Functionality**: Quickly filter and find desired files using the search feature
 - **Clear Search**: Revert search results to show all files again
 - **Expand All**: Expand all tree nodes at once
@@ -86,11 +89,11 @@ Right-click on any folder in the Explorer to see the following options:
 5. Click on files to choose whether to import as Library, Resource, or Variables
 6. Use the navigation buttons in the header to manage your selections:
    - Search: Filter files by name or type
-   - Clear Search: Show all files again
+   - Clear Search: Show all files again (only visible when search is active)
    - Expand All/Collapse All: Control tree view expansion
    - View File: Right-click to open any file for inspection
-   - Confirm Imports: Apply selected imports to the target file
-   - Cancel: Close without making changes
+   - Confirm Imports: Apply selected imports to the target file (only visible when changes are pending)
+   - Cancel: Close without making changes (only visible when changes are pending)
 7. Click "Confirm Imports" to update the file or "Cancel" to abort
 
 ### Import Management Workflow
