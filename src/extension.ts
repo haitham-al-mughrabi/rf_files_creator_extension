@@ -221,14 +221,13 @@ class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTreeItem> 
             return sectionItem;
         };
 
-        // Create Current Imports section first (if there are existing imports)
+        // Use all files for the unified tree (main section first)
+        const allFilesSection = this.createUnifiedFileTree(this.allFiles);
+        if (allFilesSection) this.rootItems.push(allFilesSection);
+
+        // Create Current Imports section below (if there are existing imports)
         const currentImportsSection = this.createCurrentImportsSection();
         if (currentImportsSection) this.rootItems.push(currentImportsSection);
-
-        // Use all files for the unified tree
-        const allFilesSection = this.createUnifiedFileTree(this.allFiles);
-
-        if (allFilesSection) this.rootItems.push(allFilesSection);
     }
 
     /**
@@ -733,26 +732,32 @@ export function activate(context: vscode.ExtensionContext) {
             if (editor && isRobotFrameworkFile(editor.document.uri.fsPath)) {
                 const newFilePath = editor.document.uri.fsPath;
 
-                // If locked and user returns to the locked file, auto-unlock
-                if (isTargetLocked && lockedTargetFile === newFilePath) {
+                // If locked and user returns to the target file, auto-unlock
+                if (isTargetLocked && lockedTargetFile && newFilePath === lockedTargetFile) {
                     unlockTargetFile();
-                    return;
-                }
 
-                // If locked and user opens a different robot file, unlock and switch to new file
-                if (isTargetLocked && lockedTargetFile !== newFilePath) {
-                    unlockTargetFile();
-                    // Dispose current tree view and load new file
+                    // Now load imports for this file normally
                     if (currentTreeView) {
                         currentTreeView.dispose();
                         currentTreeView = undefined;
                         currentTreeProvider = undefined;
                     }
+                    if (welcomeTreeView) {
+                        welcomeTreeView.dispose();
+                        welcomeTreeView = undefined;
+                    }
                     loadImportsForFile(newFilePath);
                     return;
                 }
 
-                // Not locked - normal behavior
+                // If locked and user switches to a different robot file, keep the current locked view
+                // (Don't change anything - maintain the locked target's imports)
+                if (isTargetLocked && lockedTargetFile && newFilePath !== lockedTargetFile) {
+                    // Do nothing - keep the current view for the locked target file
+                    return;
+                }
+
+                // If not locked, handle normally
                 if (!isTargetLocked) {
                     if (currentTreeView) {
                         currentTreeView.dispose();
