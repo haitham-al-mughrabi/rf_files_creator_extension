@@ -149,6 +149,9 @@ export async function loadImportsForFile(filePath: string): Promise<void> {
         suggestedFiles
     );
 
+    // Clear any previous keywords when loading new file
+    currentTreeProvider.clearKeywords();
+
     // Show the tree view by setting context
     vscode.commands.executeCommand('setContext', 'rfImportSelectorVisible', true);
 

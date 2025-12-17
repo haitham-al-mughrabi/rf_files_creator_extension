@@ -438,30 +438,13 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                     const keywords = extractKeywordsFromFile(filePath);
 
                     if (keywords.length > 0) {
-                        // Show keywords in a quick pick for selection
-                        const keywordOptions = keywords.map(kw => ({
-                            label: kw.name,
-                            description: kw.args.length > 0 ? `[${kw.args.join(', ')}]` : '',
-                            detail: kw.doc || 'No description',
-                            keyword: kw
-                        }));
-
-                        const selected = await vscode.window.showQuickPick(keywordOptions, {
-                            placeHolder: `Select a keyword from ${path.basename(filePath)}`
-                        });
-
-                        if (selected) {
-                            // Insert the selected keyword into the active editor
-                            const activeEditor = vscode.window.activeTextEditor;
-                            if (activeEditor) {
-                                const position = activeEditor.selection.active;
-                                await activeEditor.edit(editBuilder => {
-                                    editBuilder.insert(position, selected.label);
-                                });
-                                vscode.window.showInformationMessage(`Inserted keyword: ${selected.label}`);
-                            }
+                        // Show keywords in the tree view
+                        const currentTreeProvider = getCurrentTreeProvider();
+                        if (currentTreeProvider) {
+                            currentTreeProvider.setKeywords(keywords, filePath);
+                            vscode.window.showInformationMessage(`Showing ${keywords.length} keywords from ${path.basename(filePath)}`);
                         } else {
-                            vscode.window.showInformationMessage(`Found ${keywords.length} keywords in ${path.basename(filePath)}`);
+                            vscode.window.showWarningMessage('Import selector not available');
                         }
                     } else {
                         vscode.window.showInformationMessage(`No keywords found in ${path.basename(filePath)}`);
@@ -471,6 +454,26 @@ export function registerCommands(context: vscode.ExtensionContext): void {
                     vscode.window.showWarningMessage(`Could not locate file: ${importPath}`);
                 }
             }
+        }
+    );
+
+    // Register command: Insert Keyword From Tree
+    const insertKeywordFromTree = vscode.commands.registerCommand(
+        'rfFilesCreator.insertKeywordFromTree',
+        async (keywordName: string) => {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor) {
+                vscode.window.showErrorMessage('No active editor to insert keyword.');
+                return;
+            }
+
+            // Insert the keyword at the current cursor position
+            const position = activeEditor.selection.active;
+            await activeEditor.edit(editBuilder => {
+                editBuilder.insert(position, keywordName);
+            });
+
+            vscode.window.showInformationMessage(`Inserted keyword: ${keywordName}`);
         }
     );
 
@@ -518,6 +521,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         deleteImport,
         viewCurrentImport,
         viewKeywords,
+        insertKeywordFromTree,
         insertKeyword
     );
 }

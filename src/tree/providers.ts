@@ -20,6 +20,8 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
     private allFileItems: ImportTreeItem[] = [];
     private filteredRootItems: ImportTreeItem[] = []; // Store filtered results
     private searchFilter: string = ''; // Store current search term
+    private keywords: ExtractedKeyword[] = []; // Keywords to display
+    private keywordsSourceFile: string = ''; // File the keywords came from
 
     constructor(
         private allFiles: vscode.Uri[],
@@ -36,6 +38,28 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
         vscode.commands.executeCommand('setContext', 'rfHasPendingChanges', false);
     }
 
+    /**
+     * Set keywords to display in the tree
+     */
+    public setKeywords(keywords: ExtractedKeyword[], sourceFile: string): void {
+        this.keywords = keywords;
+        this.keywordsSourceFile = sourceFile;
+        this.buildTree();
+        // Refresh the tree view to display the new keywords
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Clear keywords from the tree
+     */
+    public clearKeywords(): void {
+        this.keywords = [];
+        this.keywordsSourceFile = '';
+        this.buildTree();
+        // Refresh the tree view
+        this._onDidChangeTreeData.fire();
+    }
+
     private buildTree() {
         this.rootItems = [];
         this.allFileItems = [];
@@ -47,6 +71,10 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
         // Create Current Imports section below (if there are existing imports)
         const currentImportsSection = this.createCurrentImportsSection();
         if (currentImportsSection) this.rootItems.push(currentImportsSection);
+
+        // Create Keywords section (if there are keywords)
+        const keywordsSection = this.createKeywordsSection();
+        if (keywordsSection) this.rootItems.push(keywordsSection);
     }
 
     /**
@@ -83,6 +111,54 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
             }
 
             sectionItem.children.push(importItem);
+        }
+
+        return sectionItem;
+    }
+
+    /**
+     * Create a section showing available keywords from a file
+     */
+    private createKeywordsSection(): ImportTreeItem | null {
+        if (this.keywords.length === 0) return null;
+
+        const fileName = path.basename(this.keywordsSourceFile);
+        const sectionItem = new ImportTreeItem(
+            `Keywords from ${fileName} (${this.keywords.length})`,
+            vscode.TreeItemCollapsibleState.Expanded
+        );
+        sectionItem.iconPath = new vscode.ThemeIcon('symbol-method');
+        sectionItem.contextValue = 'keywordsSection';
+
+        for (const keyword of this.keywords) {
+            const keywordItem = new ImportTreeItem(
+                keyword.name,
+                vscode.TreeItemCollapsibleState.None,
+                {
+                    isFile: false
+                }
+            );
+
+            // Show arguments if any
+            if (keyword.args.length > 0) {
+                keywordItem.description = `[${keyword.args.join(', ')}]`;
+            } else {
+                keywordItem.description = '';
+            }
+
+            // Show documentation as tooltip
+            keywordItem.tooltip = keyword.doc || 'No description';
+            keywordItem.iconPath = new vscode.ThemeIcon('symbol-method');
+            keywordItem.contextValue = 'keyword';
+
+            // Set up command to insert keyword when clicked
+            keywordItem.command = {
+                command: 'rfFilesCreator.insertKeywordFromTree',
+                title: 'Insert Keyword',
+                arguments: [keyword.name]
+            };
+
+            sectionItem.children.push(keywordItem);
         }
 
         return sectionItem;
