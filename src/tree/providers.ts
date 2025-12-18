@@ -181,18 +181,14 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
         for (const keyword of this.keywords) {
             const keywordItem = new ImportTreeItem(
                 keyword.name,
-                vscode.TreeItemCollapsibleState.None,
+                keyword.args.length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
                 {
                     isFile: false
                 }
             );
 
-            // Show arguments if any
-            if (keyword.args.length > 0) {
-                keywordItem.description = `[${keyword.args.join(', ')}]`;
-            } else {
-                keywordItem.description = '';
-            }
+            // Show documentation as description if available
+            keywordItem.description = keyword.doc ? keyword.doc.substring(0, 80) : '';
 
             // Show documentation as tooltip
             keywordItem.tooltip = keyword.doc || 'No description';
@@ -209,6 +205,23 @@ export class ImportTreeDataProvider implements vscode.TreeDataProvider<ImportTre
                     libraryName: path.basename(this.keywordsSourceFile)
                 }]
             };
+
+            // Add argument items as children if there are arguments
+            if (keyword.args.length > 0) {
+                for (const arg of keyword.args) {
+                    const argItem = new ImportTreeItem(
+                        arg,
+                        vscode.TreeItemCollapsibleState.None,
+                        {
+                            isFile: false
+                        }
+                    );
+                    argItem.iconPath = new vscode.ThemeIcon('symbol-parameter');
+                    argItem.description = '';
+                    argItem.contextValue = 'argument';
+                    keywordItem.children.push(argItem);
+                }
+            }
 
             sectionItem.children.push(keywordItem);
         }
